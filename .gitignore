@@ -1,0 +1,11 @@
+node_modules/
+artifacts/
+cache/
+typechain-types/
+dist/
+coverage/
+coverage.json
+.env
+deployments/base-mainnet.json
+deployments/base-sepolia.json
+deployments/liquidity-position.json
