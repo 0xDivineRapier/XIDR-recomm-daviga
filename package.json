@@ -10,6 +10,12 @@
     "deploy:mainnet": "hardhat run scripts/deploy-mainnet.ts --network base-mainnet",
     "upgrade": "hardhat run scripts/upgrade.ts --network base-sepolia",
     "seed": "hardhat run scripts/seed-liquidity.ts --network base-mainnet",
+    "seed:testnet": "hardhat run scripts/seed-liquidity.ts --network base-sepolia",
+    "deploy-incentive:testnet": "hardhat run scripts/deploy-float-incentive.ts --network base-sepolia",
+    "deploy-incentive:mainnet": "hardhat run scripts/deploy-float-incentive.ts --network base-mainnet",
+    "keeper:testnet": "hardhat run scripts/keeper.ts --network base-sepolia",
+    "keeper:mainnet": "hardhat run scripts/keeper.ts --network base-mainnet",
+    "dashboard": "cd dashboard && npm run dev",
     "clean": "hardhat clean"
   },
   "devDependencies": {
@@ -31,6 +37,7 @@
     "@types/chai-as-promised": "^7.1.8",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.0.0",
+    "chai": "^4.5.0",
     "ethers": "^6.16.0",
     "hardhat": "^2.22.0",
     "hardhat-gas-reporter": "^1.0.10",

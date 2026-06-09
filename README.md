@@ -61,9 +61,9 @@ Even if all four problems above get fixed, you still need liquidity. There are n
 ```
 Fix 1: New Chain (Base)          ✅ complete
   ├── Fix 2: Compliance Layer    ✅ complete — packages/compliance/
-  │     └── Fix 3: B2B API       coming
+  │     └── Fix 3: B2B API       ✅ complete — (see idrxpay repo)
   │           └── Fix 4: SG↔ID Corridor   ✅ complete — packages/corridor/
-  └── Fix 5: Liquidity Pool      coming (parallel after Fix 1)
+  └── Fix 5: Liquidity Pool      ✅ complete — contracts/ + scripts/ + dashboard/
 ```
 
 ---
@@ -73,15 +73,38 @@ Fix 1: New Chain (Base)          ✅ complete
 ```
 xidr-base/
 ├── contracts/
-│   └── XIdrToken.sol          # UUPS ERC-20, 0 decimals, role-based AML blocklist
-├── scripts/                   # deploy, upgrade, seed-liquidity
-├── test/                      # 50 Hardhat tests
+│   ├── XIdrToken.sol          # Fix 1 — UUPS ERC-20, 0 decimals, role-based AML blocklist
+│   └── FloatIncentive.sol     # Fix 5 — UUPS yield contract for B2B float holders
+├── scripts/
+│   ├── deploy.ts              # Deploy XIdrToken proxy (Sepolia)
+│   ├── deploy-mainnet.ts      # Deploy XIdrToken proxy (Mainnet)
+│   ├── upgrade.ts             # UUPS upgrade
+│   ├── seed-liquidity.ts      # Fix 5 — seed XIDR/USDC Uniswap v3 pool (idempotent)
+│   ├── manage-pool.ts         # Fix 5 — add-liquidity / collect-fees / rebalance / pool-stats
+│   ├── deploy-float-incentive.ts  # Fix 5 — deploy FloatIncentive proxy + fund treasury
+│   └── keeper.ts              # Fix 5 — cron bot: accrue yield, treasury check, collect fees
+├── test/
+│   ├── XIdrToken.test.ts      # 50 tests
+│   ├── FloatIncentive.test.ts # 37 tests
+│   └── pool.test.ts           # 12 math helper tests
+├── dashboard/                 # Fix 5 — React liquidity dashboard
+│   ├── src/
+│   │   ├── components/        # PoolStats, IncentiveStats, PartnerDashboard, RateChart, TVLChart
+│   │   ├── hooks/             # usePoolData, useIncentiveData, usePartnerData
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   └── wagmi.ts           # wagmi v2 + viem config
+│   ├── index.html
+│   ├── vite.config.ts
+│   └── package.json
 ├── packages/
 │   ├── compliance/            # Fix 2 — compliance service (KYC, AML, reserves)
 │   └── corridor/              # Fix 4 — SG↔ID remittance corridor
 │       ├── apps/api/          # Fastify corridor API
 │       └── apps/web/          # Next.js sender UI
 └── deployments/               # gitignored — written at deploy time
+    ├── base-sepolia.json       # proxy, pool, floatIncentive addresses
+    └── base-mainnet.json
 ```
 
 ---
