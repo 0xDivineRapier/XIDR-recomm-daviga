@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"          # 6380 avoids clash with reserve-dashboard Redis
+
+  pool-monitor:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3001}:3001"
+    environment:
+      ALCHEMY_RPC_URL:        ${ALCHEMY_RPC_URL}
+      AERODROME_POOL_ADDRESS: ${AERODROME_POOL_ADDRESS}
+      REDIS_URL:              redis://redis:6379
+      ALERT_WEBHOOK_URL:      ${ALERT_WEBHOOK_URL:-}
+      LOW_TVL_THRESHOLD_IDR:  ${LOW_TVL_THRESHOLD_IDR:-3000000000}
+      HMAC_SECRET:            ${HMAC_SECRET}
+      PORT:                   3001
+    depends_on:
+      - redis

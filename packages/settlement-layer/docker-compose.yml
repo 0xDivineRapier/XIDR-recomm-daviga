@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     idrx
+      POSTGRES_PASSWORD: idrx
+      POSTGRES_DB:       idrx_settlement
+    ports:
+      - "5433:5432"          # 5433 avoids clash with any local postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_create_settlements.sql:/docker-entrypoint-initdb.d/001_create_settlements.sql
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6381:6379"          # 6381 avoids clash with reserve-dashboard / pool-monitor Redis
+
+  settlement-layer:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3002}:3002"
+    environment:
+      SETTLEMENT_RAIL:       ${SETTLEMENT_RAIL:-idrx}
+      ALCHEMY_RPC_URL:       ${ALCHEMY_RPC_URL}
+      IDRX_CONTRACT_ADDRESS: ${IDRX_CONTRACT_ADDRESS}
+      DATABASE_URL:          postgres://idrx:idrx@postgres:5432/idrx_settlement
+      REDIS_URL:             redis://redis:6379
+      CALLBACK_URL:          ${CALLBACK_URL:-}
+      PORT:                  3002
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  postgres_data:

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>IDRXPay · Liquidity Pool Monitor</title>
+  <style>
+    :root {
+      --green:  #16a34a; --green-bg:  #dcfce7;
+      --yellow: #b45309; --yellow-bg: #fef9c3;
+      --red:    #dc2626; --red-bg:    #fee2e2;
+      --blue:   #1e40af;
+      --bg: #f9fafb; --card: #fff; --border: #e5e7eb;
+      --text: #111827; --muted: #6b7280;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+    header { background: var(--blue); color: #fff; padding: 1.25rem 2rem; display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.2rem; font-weight: 700; }
+    header p  { font-size: 0.8rem; opacity: .8; margin-top: .2rem; }
+
+    #status-bar {
+      text-align: center; padding: .7rem 1rem; font-weight: 600; font-size: .95rem;
+      transition: background .4s, color .4s;
+    }
+    #status-bar.green  { background: var(--green-bg);  color: var(--green);  }
+    #status-bar.yellow { background: var(--yellow-bg); color: var(--yellow); }
+    #status-bar.red    { background: var(--red-bg);    color: var(--red);    }
+
+    main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: .75rem; padding: 1.25rem; }
+    .card label { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .card .val { font-size: 1.65rem; font-weight: 700; margin-top: .25rem; }
+    .card small { color: var(--muted); font-size: .78rem; }
+
+    .card .val.green  { color: var(--green); }
+    .card .val.yellow { color: var(--yellow); }
+    .card .val.red    { color: var(--red); }
+
+    .slippage-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+
+    .meta { background: var(--card); border: 1px solid var(--border); border-radius: .75rem; padding: 1rem 1.25rem; font-size: .82rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: .5rem 2rem; }
+    .meta span b { color: var(--text); }
+
+    footer { text-align: center; color: var(--muted); font-size: .75rem; margin: 2rem 0 1rem; }
+    a { color: var(--blue); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>IDRXPay — Aerodrome Liquidity Monitor</h1>
+    <p>Pool health for SNAP-compliant B2B settlements · refreshes every 60 s</p>
+  </div>
+</header>
+
+<div id="status-bar" class="green">Loading pool data…</div>
+
+<main>
+  <div class="grid">
+    <div class="card">
+      <label>TVL (IDR equivalent)</label>
+      <div class="val" id="tvl">—</div>
+      <small id="tvl-tier">—</small>
+    </div>
+    <div class="card">
+      <label>24h Volume</label>
+      <div class="val" id="vol" style="font-size:1.2rem;margin-top:.4rem">—</div>
+      <small>on-chain estimate</small>
+    </div>
+  </div>
+
+  <div class="slippage-grid">
+    <div class="card">
+      <label>Slippage — Rp 500 M swap</label>
+      <div class="val" id="slip500">—</div>
+      <small>constant-product approximation</small>
+    </div>
+    <div class="card">
+      <label>Slippage — Rp 100 M swap</label>
+      <div class="val" id="slip100">—</div>
+      <small>constant-product approximation</small>
+    </div>
+  </div>
+
+  <div class="meta">
+    <span>Pool <b id="pool-addr">—</b></span>
+    <span>Last updated <b id="updated">—</b></span>
+  </div>
+</main>
+
+<footer>
+  <a href="/api/v1/pool">Raw JSON API</a> ·
+  Data signed HMAC-SHA256 (X-Pool-Signature)
+</footer>
+
+<script>
+  const fmt = new Intl.NumberFormat("id-ID");
+
+  function tvlClass(tvl) {
+    if (tvl >= 5_000_000_000) return "green";
+    if (tvl >= 3_000_000_000) return "yellow";
+    return "red";
+  }
+
+  function tvlLabel(tvl) {
+    if (tvl >= 5_000_000_000) return "Healthy — pool supports enterprise settlements";
+    if (tvl >= 3_000_000_000) return "Caution — pool depth below Rp 5 B target";
+    return "Alert — TVL below Rp 3 B minimum threshold";
+  }
+
+  function tvlTier(tvl) {
+    if (tvl >= 5_000_000_000) return "● Green — above Rp 5 B";
+    if (tvl >= 3_000_000_000) return "● Yellow — Rp 3–5 B";
+    return "● Red — below Rp 3 B";
+  }
+
+  async function refresh() {
+    try {
+      const res = await fetch("/api/v1/pool");
+      if (!res.ok) throw new Error(res.statusText);
+      const d = await res.json();
+
+      const cls = tvlClass(d.tvl_idr);
+      document.getElementById("status-bar").className = cls;
+      document.getElementById("status-bar").textContent = tvlLabel(d.tvl_idr);
+
+      document.getElementById("tvl").textContent = "Rp " + fmt.format(d.tvl_idr);
+      document.getElementById("tvl").className = "val " + cls;
+      document.getElementById("tvl-tier").textContent = tvlTier(d.tvl_idr);
+
+      document.getElementById("vol").textContent = "Rp " + fmt.format(d.volume_24h_idr);
+      document.getElementById("slip500").textContent = d.slippage_500m_pct.toFixed(4) + " %";
+      document.getElementById("slip500").className = "val " + (d.slippage_500m_pct > 2 ? "red" : d.slippage_500m_pct > 0.5 ? "yellow" : "green");
+      document.getElementById("slip100").textContent = d.slippage_100m_pct.toFixed(4) + " %";
+      document.getElementById("slip100").className = "val " + (d.slippage_100m_pct > 1 ? "red" : d.slippage_100m_pct > 0.2 ? "yellow" : "green");
+
+      document.getElementById("pool-addr").textContent = d.pool_address || "—";
+      document.getElementById("updated").textContent = new Date(d.last_updated).toLocaleString("id-ID");
+    } catch (err) {
+      document.getElementById("status-bar").className = "red";
+      document.getElementById("status-bar").textContent = "⚠ Data unavailable — " + err.message;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 60_000);
+</script>
+</body>
+</html>
