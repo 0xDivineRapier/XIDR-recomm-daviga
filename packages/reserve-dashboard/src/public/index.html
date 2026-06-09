@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IDRX Reserve Transparency</title>
+  <style>
+    :root {
+      --green: #16a34a;
+      --red: #dc2626;
+      --bg: #f9fafb;
+      --card: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    header { background: #1e40af; color: #fff; padding: 1.25rem 2rem; }
+    header h1 { font-size: 1.25rem; font-weight: 700; }
+    header p { font-size: 0.875rem; opacity: 0.8; margin-top: 0.25rem; }
+
+    #alert-banner {
+      display: none;
+      background: var(--red);
+      color: #fff;
+      text-align: center;
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+    }
+
+    main { max-width: 860px; margin: 2rem auto; padding: 0 1rem; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1.25rem;
+    }
+    .card label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+    .card .value { font-size: 2rem; font-weight: 700; margin-top: 0.25rem; }
+    .card .value.ratio-ok  { color: var(--green); }
+    .card .value.ratio-bad { color: var(--red); }
+    .card small { color: var(--muted); font-size: 0.8rem; }
+
+    .sources { background: var(--card); border: 1px solid var(--border); border-radius: 0.75rem; padding: 1.25rem; }
+    .sources h2 { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
+    .sources ul { list-style: none; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .sources li { background: #dbeafe; color: #1e40af; font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 999px; }
+
+    footer { text-align: center; color: var(--muted); font-size: 0.75rem; margin: 2rem 0 1rem; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>IDRX Reserve Transparency Dashboard</h1>
+  <p>Real-time proof of 1:1 IDR reserve backing · refreshes every 60 seconds</p>
+</header>
+
+<div id="alert-banner">⚠ Reserve ratio below 99% — collateralisation alert active</div>
+
+<main>
+  <div class="grid">
+    <div class="card">
+      <label>Reserve Ratio</label>
+      <div class="value" id="ratio">—</div>
+      <small>Target ≥ 100%</small>
+    </div>
+    <div class="card">
+      <label>IDRX Total Supply</label>
+      <div class="value" id="supply" style="font-size:1.25rem;margin-top:0.5rem">—</div>
+      <small>IDR equivalent</small>
+    </div>
+    <div class="card">
+      <label>IDR Reserve Balance</label>
+      <div class="value" id="reserve" style="font-size:1.25rem;margin-top:0.5rem">—</div>
+      <small>Custodian-reported</small>
+    </div>
+    <div class="card">
+      <label>Last Updated</label>
+      <div class="value" id="updated" style="font-size:0.95rem;margin-top:0.5rem;font-weight:500">—</div>
+      <small>&nbsp;</small>
+    </div>
+  </div>
+
+  <div class="sources">
+    <h2>Data Sources</h2>
+    <ul id="sources"></ul>
+  </div>
+</main>
+
+<footer>Data signed with HMAC-SHA256 · <a href="/api/v1/reserves">Raw JSON</a> · <a href="/badge">Embeddable Badge</a></footer>
+
+<script>
+  const fmt = new Intl.NumberFormat("id-ID");
+  async function refresh() {
+    try {
+      const res = await fetch("/api/v1/reserves");
+      if (!res.ok) throw new Error(res.statusText);
+      const d = await res.json();
+
+      const pct = (d.ratio * 100).toFixed(2) + "%";
+      const ratioEl = document.getElementById("ratio");
+      ratioEl.textContent = pct;
+      ratioEl.className = "value " + (d.ratio >= 0.99 ? "ratio-ok" : "ratio-bad");
+
+      document.getElementById("supply").textContent = "Rp " + fmt.format(d.total_supply);
+      document.getElementById("reserve").textContent = "Rp " + fmt.format(d.idr_reserve_balance);
+      document.getElementById("updated").textContent = new Date(d.last_updated).toLocaleString("id-ID");
+
+      const ul = document.getElementById("sources");
+      ul.innerHTML = d.data_sources.map(s => `<li>${s}</li>`).join("");
+
+      const banner = document.getElementById("alert-banner");
+      banner.style.display = d.ratio < 0.99 ? "block" : "none";
+    } catch (err) {
+      document.getElementById("alert-banner").style.display = "block";
+      document.getElementById("alert-banner").textContent = "⚠ Data source unavailable — " + err.message;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 60_000);
+</script>
+</body>
+</html>
