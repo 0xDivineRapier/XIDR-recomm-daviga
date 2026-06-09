@@ -9,3 +9,4 @@ coverage.json
 deployments/base-mainnet.json
 deployments/base-sepolia.json
 deployments/liquidity-position.json
+node_modules/
