@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+
+  reserve-dashboard:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      ALCHEMY_RPC_URL: ${ALCHEMY_RPC_URL}
+      IDRX_CONTRACT_ADDRESS: ${IDRX_CONTRACT_ADDRESS}
+      REDIS_URL: redis://redis:6379
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      HMAC_SECRET: ${HMAC_SECRET}
+      PORT: 3000
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      - redis
