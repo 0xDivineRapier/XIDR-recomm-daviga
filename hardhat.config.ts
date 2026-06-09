@@ -22,6 +22,10 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       chainId: 31337,
+      // When BASE_MAINNET_FORK=true, fork Base mainnet for pool tests
+      ...(process.env.BASE_MAINNET_FORK === "true" && BASE_MAINNET_RPC_URL !== "https://mainnet.base.org"
+        ? { forking: { url: BASE_MAINNET_RPC_URL, blockNumber: undefined } }
+        : {}),
     },
     "base-sepolia": {
       url: BASE_SEPOLIA_RPC_URL,
@@ -66,7 +70,7 @@ const config: HardhatUserConfig = {
   },
   typechain: {
     outDir: "typechain-types",
-    target: "viem-v2",
+    target: "ethers-v6",
   },
 };
 
