@@ -481,6 +481,182 @@ packages/corridor/
 
 ---
 
+## Fix 5 — Liquidity Pool + Float Incentives (`contracts/` · `scripts/` · `dashboard/`)
+
+Solves the cold-start liquidity problem: seeds a real Uniswap v3 XIDR/USDC pool on Base and gives B2B partners a financial reason to hold XIDR float instead of converting it immediately.
+
+### Two mechanisms
+
+**Uniswap v3 pool (XIDR/USDC)**
+
+A concentrated-liquidity position centered at the live XIDR/IDR → USDC rate, with a ±5% price range. Any DeFi protocol or aggregator can route through this pool. A keeper bot monitors tick range health and triggers a rebalance when the position drifts out of range.
+
+**FloatIncentive — B2B yield contract**
+
+B2B partners (remittance providers, exchanges, fintechs) that integrate XIDR naturally hold a float balance. `FloatIncentive.sol` pays them continuous yield for doing so — measured from the moment they register, claimable any time.
+
+```
+yield = stakedBalance × apyBps × timeElapsed / (10_000 × 365 days)
+```
+
+Yield is paid from a treasury wallet funded at deploy time. The partner never locks tokens — they hold XIDR in their own wallet; the contract reads the live balance.
+
+### FloatIncentive contract
+
+`contracts/FloatIncentive.sol` — 335 lines, UUPS upgradeable, OpenZeppelin 5.x
+
+| Property | Value |
+|---|---|
+| Decimals | 0 (matches XIDR) |
+| Yield formula | `balance × apyBps × elapsed / (10_000 × 365 days)` |
+| Default APY | 500 bps (5%) — configurable by `MANAGER_ROLE` |
+| Claim pattern | CEI (checks-effects-interactions) — no re-entrancy |
+| Token transfer | `SafeERC20.safeTransfer` from treasury |
+
+**Roles:**
+
+| Role | Capability |
+|---|---|
+| `DEFAULT_ADMIN_ROLE` | Grant/revoke roles, authorize upgrades |
+| `MANAGER_ROLE` | Register/remove partners, set APY per partner, pause |
+| `TREASURY_ROLE` | Fund and withdraw from reward treasury |
+
+**Key functions:** `registerPartner`, `removePartner`, `claimYield`, `pendingYield`, `setPartnerApy`, `fundTreasury`, `withdrawTreasury`
+
+**Struct:**
+```solidity
+struct PartnerStake {
+    address wallet;
+    uint256 stakedAt;
+    uint256 lastClaimAt;
+}
+```
+
+### Pool management CLI (`scripts/manage-pool.ts`)
+
+```bash
+npx ts-node scripts/manage-pool.ts <command> [options]
+
+Commands:
+  add-liquidity   --amount-xidr <n> --amount-usdc <n>   Add liquidity at current price ±5%
+  collect-fees                                           Collect accumulated swap fees to treasury
+  rebalance                                              Remove out-of-range position, re-center ±5%
+  pool-stats                                             Print tick range, TVL, fee tier, current price
+```
+
+### Keeper bot (`scripts/keeper.ts`)
+
+Runs on a cron schedule (default: every 15 minutes). Each tick:
+
+1. **Accrue yield** — iterates registered partners, checks `pendingYield()` vs. treasury balance
+2. **Treasury health** — alerts if treasury balance falls below 7-day runway
+3. **Pool tick check** — reads current tick from Uniswap v3 slot0; triggers `rebalance` if position is >80% out of range
+4. **Fee collection** — collects fees once per day
+
+```bash
+# Run once (CI / manual trigger)
+npx ts-node scripts/keeper.ts --once
+
+# Daemon mode (15-min interval)
+npx ts-node scripts/keeper.ts
+```
+
+### Liquidity dashboard (`dashboard/`)
+
+React 18 + Vite + wagmi v2 single-page app. Connect a wallet to see partner-specific yield data.
+
+| Component | What it shows |
+|---|---|
+| `PoolStats` | Current price, tick range, TVL, 24h fees, fee tier |
+| `TVLChart` | 30-day TVL history (recharts area chart) |
+| `RateChart` | XIDR/USDC price over time |
+| `IncentiveStats` | Total partners, total yield paid, treasury balance, treasury runway |
+| `PartnerDashboard` | Connected wallet: pending yield, APY, balance, last claim |
+
+```bash
+cd dashboard
+npm install
+npm run dev   # Vite dev server on :5173
+npm run build
+```
+
+### Functional requirements
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-5-001 | XIDR/USDC Uniswap v3 pool seeded idempotently (no double-seed) | ✅ |
+| FR-5-002 | Concentrated liquidity position at live rate ±5% | ✅ |
+| FR-5-003 | Partner yield accrues continuously from registration; claimable any time | ✅ |
+| FR-5-004 | `claimYield` uses CEI pattern — no re-entrancy vector | ✅ |
+| FR-5-005 | Keeper bot rebalances pool when position drifts out of range | ✅ |
+| FR-5-006 | Treasury health alert when balance < 7-day runway | ✅ |
+| FR-5-007 | Dashboard shows live pool stats and per-partner yield without page reload | ✅ |
+| FR-5-008 | `FloatIncentive.sol` UUPS upgradeable — same proxy pattern as XIdrToken | ✅ |
+| FR-5-009 | Per-partner APY override — different rates for anchor partners | ✅ |
+| FR-5-010 | Deploy script funds treasury and registers initial partners atomically | ✅ |
+
+### Fix 5 setup
+
+**Deploy FloatIncentive:**
+
+```bash
+# Ensure deployments/base-sepolia.json exists from Fix 1 deploy
+npx ts-node scripts/deploy-float-incentive.ts --network base-sepolia
+# → writes floatIncentive address to deployments/base-sepolia.json
+```
+
+**Seed the pool:**
+
+```bash
+npm run seed   # idempotent — safe to re-run
+```
+
+**Run the keeper:**
+
+```bash
+# .env must have KEEPER_WALLET_PRIVATE_KEY, FLOAT_INCENTIVE_ADDRESS, UNISWAP_POOL_ADDRESS
+npx ts-node scripts/keeper.ts
+```
+
+**Dashboard:**
+
+```bash
+cd dashboard
+cp .env.example .env   # set VITE_FLOAT_INCENTIVE_ADDRESS, VITE_XIDR_ADDRESS, VITE_POOL_ADDRESS
+npm install && npm run dev
+```
+
+**Environment variables (root `.env`):**
+
+```bash
+# Pool management + keeper
+KEEPER_WALLET_PRIVATE_KEY=    # wallet with MANAGER_ROLE + TREASURY_ROLE
+FLOAT_INCENTIVE_ADDRESS=      # from deployments/base-sepolia.json
+UNISWAP_POOL_ADDRESS=         # from deployments/base-sepolia.json
+UNISWAP_POSITION_TOKEN_ID=    # NFT token ID of the LP position
+
+# Alerts
+OPS_ALERT_WEBHOOK_URL=        # Slack / PagerDuty incoming webhook
+TREASURY_RUNWAY_DAYS=7        # alert threshold
+```
+
+**Tests:**
+
+```bash
+npm test   # 107 total: 50 XIdrToken + 45 FloatIncentive + 12 pool math
+```
+
+### Fix 5 tech stack
+
+- Solidity 0.8.24 + OpenZeppelin Contracts Upgradeable 5.x (UUPS)
+- Uniswap v3 core/periphery (NonfungiblePositionManager, SwapRouter02)
+- Hardhat + TypeScript + Chai + hardhat-network-helpers
+- viem v2 (keeper + deploy scripts)
+- React 18 + Vite 5 + wagmi v2 + viem + recharts
+- RainbowKit (wallet connect in dashboard)
+
+---
+
 ## Contract addresses
 
 Auto-generated at deploy time. After running the deploy script:
@@ -524,8 +700,6 @@ These files are gitignored. The deployer is responsible for storing them securel
 
 ---
 
-## Out of scope (coming in Fix 3–5)
+## Out of scope
 
-- B2B payment API with Virtual Account IDR on-ramp (Fix 3)
-- SG↔ID remittance corridor via GoPay/OVO/DANA (Fix 4)
-- Uniswap v3 liquidity pool seeding + B2B float yield (Fix 5)
+All five fixes are now complete. See roadmap tree above.
