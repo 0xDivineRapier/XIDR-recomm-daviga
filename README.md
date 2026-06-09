@@ -62,7 +62,7 @@ Even if all four problems above get fixed, you still need liquidity. There are n
 Fix 1: New Chain (Base)          ✅ complete
   ├── Fix 2: Compliance Layer    ✅ complete — packages/compliance/
   │     └── Fix 3: B2B API       coming
-  │           └── Fix 4: SG↔ID Corridor   coming
+  │           └── Fix 4: SG↔ID Corridor   ✅ complete — packages/corridor/
   └── Fix 5: Liquidity Pool      coming (parallel after Fix 1)
 ```
 
@@ -77,7 +77,10 @@ xidr-base/
 ├── scripts/                   # deploy, upgrade, seed-liquidity
 ├── test/                      # 50 Hardhat tests
 ├── packages/
-│   └── compliance/            # Fix 2 — compliance service (see below)
+│   ├── compliance/            # Fix 2 — compliance service (KYC, AML, reserves)
+│   └── corridor/              # Fix 4 — SG↔ID remittance corridor
+│       ├── apps/api/          # Fastify corridor API
+│       └── apps/web/          # Next.js sender UI
 └── deployments/               # gitignored — written at deploy time
 ```
 
@@ -318,6 +321,143 @@ packages/compliance/
 
 ---
 
+## Fix 4 — SG↔ID Remittance Corridor (`packages/corridor/`)
+
+The consumer-facing product that puts XIDR in front of real users: Indonesian migrant workers in Singapore sending money home. Sender pays SGD via PayNow or card; recipient in Indonesia receives IDR to their bank account, GoPay, OVO, or DANA.
+
+### Transfer flow
+
+```
+Sender pays SGD (PayNow QR or Stripe card)
+  → Stripe/PayNow webhook confirms payment
+  → swap.worker: XSGD→XIDR via Uniswap v3 two-hop (XSGD→USDC→XIDR)
+  → disburse.worker: calls Fix 3 /v1/redeem/request → Flip.id IDR disbursement
+  → Fix 3 outbound webhook fires corridor-redeem event → status = completed
+  → SMS sent to sender confirming delivery
+```
+
+### Key components
+
+| Component | Description |
+|---|---|
+| FX rate service | Pyth Network price feed (SGD/USD + USD/IDR) with CoinGecko fallback, Redis-cached at 60s TTL |
+| Rate lock | Quote locked for 15 minutes — sender pays locked rate even if market moves |
+| PayNow QR | EMVCo-compliant SGQR string generated server-side |
+| Stripe | SGD card payments with 3DS support |
+| Uniswap v3 | Two-hop swap: XSGD → USDC → XIDR via 0.05% fee pools on Base |
+| Disbursement | Calls Fix 3 B2B API `/v1/redeem/request` with corridor API key |
+| SMS | Twilio bilingual notifications (English + Bahasa Indonesia) |
+| Phone OTP auth | Twilio Verify — appropriate for TKI demographic (no email required) |
+
+### FX fee structure (configurable via env)
+
+```
+CORRIDOR_SPREAD=0.005          # 0.5% margin on rate
+CORRIDOR_FEE_FLAT_SGD=1.50    # flat per-transfer fee
+CORRIDOR_FEE_PCT=0.01          # 1% of send amount
+CORRIDOR_FEE_MAX_SGD=15.00    # fee cap
+
+Example: SGD 100 → fee SGD 2.50 → recipient gets IDR 1,149,622
+```
+
+### API surface
+
+```
+POST /v1/auth/otp/send          Send OTP to Singapore number (+65 only)
+POST /v1/auth/otp/verify        Verify OTP → JWT
+POST /v1/auth/refresh           Refresh access token
+
+GET  /v1/rates/current          Live SGD/IDR rate (public, <50ms from Redis)
+POST /v1/rates/quote            Calculate exact transfer breakdown with fee
+
+GET  /v1/sender/profile         Sender profile + KYC status
+POST /v1/sender/kyc/start       Start Persona KYC
+
+POST /v1/recipients             Add recipient (bank or e-wallet, verified via Flip)
+GET  /v1/recipients             List saved recipients
+
+POST /v1/transfers              Initiate transfer — returns PayNow QR or Stripe client secret
+GET  /v1/transfers/:id          Poll transfer status
+GET  /v1/transfers              Transfer history
+POST /v1/transfers/:id/cancel   Cancel if still pending_payment
+GET  /v1/transfers/track/:id    Public tracker — no auth required
+
+POST /webhooks/paynow           PayNow payment confirmed → enqueues swap
+POST /webhooks/stripe           Stripe payment → enqueues swap
+POST /webhooks/corridor-redeem  Fix 3 webhook → marks transfer completed
+```
+
+### Transfer statuses (append-only)
+
+```
+pending_payment → payment_received → swapping → swap_complete → disbursing → completed
+                                                                            ↘ failed (ops alert)
+```
+
+If disbursement fails after swap completes, the job does **not** retry automatically — XIDR is in the corridor wallet and the ops team resolves it manually. This prevents double-disburse.
+
+### Functional requirements
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-001 | FX rate locked for 15 min from quote — sender pays locked rate | ✅ |
+| FR-002 | PayNow and Stripe both supported as SGD on-ramp | ✅ |
+| FR-003 | XSGD→XIDR swap via Uniswap v3 with 0.5% slippage protection | ✅ |
+| FR-004 | IDR disbursement via Fix 3 — XIDR burned before Flip payout | ✅ |
+| FR-005 | Transfer expires if no payment within 30 minutes | ✅ |
+| FR-006 | Sender phone KYC (Persona) required before first transfer | ✅ |
+| FR-007 | SMS at payment_received and completed/failed (bilingual) | ✅ |
+| FR-008 | Rate refreshes every 60s from Pyth with CoinGecko fallback | ✅ |
+| FR-009 | Disbursement failure after swap: ops alert, no auto-retry | ✅ |
+| FR-010 | Public transfer tracker page works without auth | ✅ |
+
+### Fix 4 setup
+
+```bash
+cd packages/corridor/apps/api
+cp .env.example .env   # fill in Stripe, Twilio, Pyth, CORRIDOR_WALLET_PRIVATE_KEY
+npm install
+# from project root:
+docker-compose up -d postgres redis
+npm run db:migrate
+npm run dev            # API on :3002
+npm run dev:worker
+npm test               # 20 tests, all passing
+```
+
+```bash
+cd packages/corridor/apps/web
+npm install
+npm run dev            # Next.js UI on :3000
+```
+
+### Project structure
+
+```
+packages/corridor/
+├── apps/
+│   ├── api/
+│   │   ├── src/
+│   │   │   ├── routes/    auth, rates, sender, recipient, transfer, webhooks
+│   │   │   ├── services/  fx-rate, swap, paynow, stripe, disbursement, otp, sms
+│   │   │   ├── workers/   swap, disburse, rate-cache
+│   │   │   ├── jobs/      queue.ts (BullMQ: corridor-swap, corridor-disburse, corridor-rate-cache)
+│   │   │   └── db/        schema.ts (senders, recipients, transfers, rate_snapshots, otp_sessions)
+│   │   └── test/          auth (4), rates (4), transfer (7), webhooks (5)
+│   └── web/
+│       ├── app/
+│       │   ├── (auth)/login/    Phone OTP login
+│       │   ├── (app)/send/      4-step transfer flow (amount → payment → processing → complete)
+│       │   ├── (app)/history/   Transfer history
+│       │   └── track/[id]/      Public transfer tracker (no auth)
+│       └── components/
+│           ├── RateDisplay.tsx       Live rate with 60s countdown, flash on >1% change
+│           ├── PayNowQR.tsx          EMVCo QR with countdown timer, copy reference, deep link
+│           └── TransferStatus.tsx    Step-by-step progress tracker
+```
+
+---
+
 ## Contract addresses
 
 Auto-generated at deploy time. After running the deploy script:
@@ -337,6 +477,17 @@ These files are gitignored. The deployer is responsible for storing them securel
 - ethers v6
 - Base Mainnet (chainId 8453) / Base Sepolia (84532)
 - Uniswap v3 on Base for XIDR/USDC pool
+
+## Fix 4 tech stack
+
+- Node.js 20 + TypeScript, Fastify 4.x
+- PostgreSQL 15 + Drizzle ORM
+- BullMQ + Redis (3 queues: swap, disburse, rate-cache)
+- viem v2 (Uniswap v3 two-hop swap on Base)
+- Pyth Network price feeds (with CoinGecko fallback)
+- Stripe SDK (SGD card payments)
+- Twilio Verify + SMS (phone OTP + bilingual notifications)
+- Next.js 14 (App Router) + Tailwind CSS + qrcode.react
 
 ## Fix 2 tech stack
 
